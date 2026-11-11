@@ -71,8 +71,8 @@ def run_gui():
         has_dnd = False
 
     root.title(f"CoD Asset Porter {__version__}")
-    root.geometry("820x760")
-    root.minsize(680, 620)
+    root.geometry("840x860")
+    root.minsize(700, 720)
     root.configure(bg=BG)
     font = "Segoe UI" if sys.platform == "win32" else "Helvetica"
     try:
@@ -108,7 +108,7 @@ def run_gui():
                         font=(font, size, "bold" if bold else "normal"), **kw)
 
     def section(title):
-        label(body, title, 11, bold=True, anchor="w").pack(fill="x", pady=(12, 6))
+        label(body, title, 11, bold=True, anchor="w").pack(fill="x", pady=(10, 5))
 
     def entry(parent, var):
         return tk.Entry(parent, textvariable=var, bg=PANEL, fg=TEXT, insertbackground=TEXT,
@@ -129,7 +129,7 @@ def run_gui():
     section("1.  Files")
     files_box = tk.Frame(body, bg=PANEL, highlightthickness=1, highlightbackground=BORDER)
     files_box.pack(fill="both", expand=False)
-    lb = tk.Listbox(files_box, height=7, bg=PANEL, fg=TEXT, bd=0, highlightthickness=0,
+    lb = tk.Listbox(files_box, height=6, bg=PANEL, fg=TEXT, bd=0, highlightthickness=0,
                     selectbackground=BORDER, selectforeground=TEXT, activestyle="none",
                     font=(font, 10), selectmode="extended")
     sb = ttk.Scrollbar(files_box, orient="vertical", command=lb.yview)
@@ -295,7 +295,7 @@ def run_gui():
     # Log
     log_box = tk.Frame(body, bg=PANEL, highlightthickness=1, highlightbackground=BORDER)
     log_box.pack(fill="both", expand=True)
-    txt = tk.Text(log_box, bg=PANEL, fg=TEXT, bd=0, highlightthickness=0, wrap="word",
+    txt = tk.Text(log_box, height=12, bg=PANEL, fg=TEXT, bd=0, highlightthickness=0, wrap="word",
                   font=("Consolas" if sys.platform == "win32" else "Courier", 9),
                   padx=10, pady=8, state="disabled")
     lsb = ttk.Scrollbar(log_box, orient="vertical", command=txt.yview)
