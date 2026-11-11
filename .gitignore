@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+build/
+dist/
+*.spec
+.setup_done
+smoke/
+smoke_out/
+release/
+*.zip
+port_log_*.txt
