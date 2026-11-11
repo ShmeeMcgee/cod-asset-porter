@@ -11,8 +11,8 @@ from .anims import ANIM_EXTS, KEYED_EXTS, anim_bone_names, complete_with_rig, re
 from .data import ConversionError
 from .gdt import SourceInfo, win, write_gdt
 from .games import GAMES, Game
-from .models import (MODEL_EXTS, model_type, prepare_model, read_model, recenter_viewmodel,
-                     safe_name, write_model)
+from .models import (MODEL_EXTS, far_from_root, model_type, prepare_model, read_model,
+                     recenter_viewmodel, safe_name, write_model)
 from .sidecars import ImageIndex, find_images_txt, read_images_txt
 from .sounds import SOUND_EXTS, convert_sound
 from .textures import TEXTURE_EXTS, convert_texture
@@ -278,6 +278,13 @@ def convert_batch(paths, game_key, out_root, rig_path=None, pack=None,
                 if shift:
                     emit("info", f"Moved this viewmodel by {abs(shift[2]):g} units so tag_view sits at "
                                  f"the origin, as {game.short} expects (its animations get the same move).")
+            if game.key == "bo1":
+                far = far_from_root(model)
+                if far:
+                    emit("warn", f"This is a small part ({far[0]:.1f} units across) placed {far[1]:.0f} "
+                                 "units from its root bone. Black Ops 1's converter will stop on it with "
+                                 "\"rotation invariant bounds far exceed physical bounds\" and ask "
+                                 "Continue?. Answer yes; the model converts fine.")
             _resolve_materials(model, src, info, images, run, emit)
             out = os.path.join(run.folder("model"), name + game.model_ext)
             write_model(model, out, game)

@@ -10,3 +10,11 @@ First public release.
 * Writes a GDT per batch with models, materials (textures filled in), BO3 images and animations.
 * Uses GDTs and `*_images.txt` that come with port packs to wire up textures and rigs.
 * Finds your Steam mod tools folders and can write straight into them.
+* Tested in the real World at War and Black Ops 1 converters: models, materials and
+  animations all compile.
+* Renames assets that would clash with names the game already uses, and fills missing
+  color maps with a grey placeholder so materials still build.
+* Moves viewmodels so `tag_view` sits at the origin for CoD4/WaW/BO1, and adds bones
+  BO3 animations leave out, so older converters keep the whole arm chain.
+* Warns before Black Ops 1's converter stops to ask *Continue?* about a small part far
+  from its root bone.

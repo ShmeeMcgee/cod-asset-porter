@@ -331,10 +331,6 @@ class PorterTests(unittest.TestCase):
         self.assertEqual(self.summary["bo2"].get("skipped"), 3)   # anims skipped for BO2
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class RealToolFixes(unittest.TestCase):
     """Regressions found by running output through the real WaW converter."""
 
@@ -386,3 +382,21 @@ class RealToolFixes(unittest.TestCase):
             self.assertTrue(ents[("mtl_arm_skin_pk", "material.gdf")]["colorMap"].endswith("pk_missing_c.tga"))
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_bo1_far_from_root_warning(self):
+        """BO1's converter prompts for small meshes far from the origin (found in the real BO1 tools)."""
+        from porter.data import Model
+        from porter.models import far_from_root
+        box = [(x, y, z) for x in (0.0, 3.5) for y in (0.0, 4.7) for z in (0.0, 4.6)]
+        far = Model("far")
+        far.verts = [((x + 9.7, y + 6.4, z - 16.0), [(0, 1.0)]) for x, y, z in box]
+        near = Model("near")
+        near.verts = [((x - 1.7, y - 2.3, z - 2.3), [(0, 1.0)]) for x, y, z in box]
+        radius, dist = far_from_root(far)
+        self.assertAlmostEqual(radius, 3.73, delta=0.02)  # same measure BO1's converter prints
+        self.assertGreater(dist, 20)
+        self.assertIsNone(far_from_root(near))
+
+
+if __name__ == "__main__":
+    unittest.main()

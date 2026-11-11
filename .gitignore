@@ -3,7 +3,7 @@ __pycache__/
 build/
 dist/
 *.spec
-.setup_done
+.setup_done*
 smoke/
 smoke_out/
 release/

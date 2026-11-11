@@ -67,6 +67,10 @@ to the model it belongs to.
 
 * **CoD4 / WaW / BO1:** open Asset Manager, then *File > Open > source_data\\&lt;pack&gt;.gdt*,
   select everything and press **Convert**. Add the assets to your mod's `mod.csv` as usual.
+* **BO1 "Continue?" prompt:** for a small part that sits far from its root bone (a wrist
+  device on an arms rig, say), Black Ops 1's converter reports *rotation invariant bounds far
+  exceed physical bounds* and asks *Continue?*. Answer yes. The app warns you when a model
+  will do this.
 * **Black Ops 3:** the GDT shows up in APE under `source_data`. Add the assets to your zone
   file and link from the Launcher.
 * **Black Ops 2:** models are built with [OpenAssetTools](https://github.com/Laupetin/OpenAssetTools).

@@ -179,6 +179,26 @@ def recenter_viewmodel(model: Model):
     return shift
 
 
+def far_from_root(model: Model, limit=4.0):
+    """BO1's converter stops and asks "Continue?" when a mesh sits far from the
+    model's origin compared with its own size (it calls this "rotation
+    invariant bounds far exceed physical bounds"). Small viewmodel parts placed
+    out in front of the camera trip it. Returns (radius, distance) when the
+    model looks like one of those, else None. The radius is half the bounding
+    box diagonal and the distance is the farthest vertex from the origin, the
+    same numbers the converter prints."""
+    pts = [p for p, _ in model.verts]
+    if not pts:
+        return None
+    lo = [min(p[i] for p in pts) for i in range(3)]
+    hi = [max(p[i] for p in pts) for i in range(3)]
+    radius = 0.5 * sum((hi[i] - lo[i]) ** 2 for i in range(3)) ** 0.5
+    dist = max((p[0] ** 2 + p[1] ** 2 + p[2] ** 2) ** 0.5 for p in pts)
+    if radius > 0 and dist > limit * radius:
+        return radius, dist
+    return None
+
+
 def write_model(model: Model, path, game: Game):
     if game.model_format == "xmodel6":
         write_xmodel(model, path, 6)
