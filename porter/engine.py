@@ -3,14 +3,16 @@ GDT (or BO2 model JSON) so everything shows up in the game's mod tools."""
 from __future__ import annotations
 
 import os
+import re
 import time
 import traceback
 
-from .anims import ANIM_EXTS, KEYED_EXTS, anim_bone_names, read_anim
+from .anims import ANIM_EXTS, KEYED_EXTS, anim_bone_names, complete_with_rig, read_anim, shift_anim
 from .data import ConversionError
 from .gdt import SourceInfo, win, write_gdt
 from .games import GAMES, Game
-from .models import MODEL_EXTS, model_type, prepare_model, read_model, safe_name, write_model
+from .models import (MODEL_EXTS, model_type, prepare_model, read_model, recenter_viewmodel,
+                     safe_name, write_model)
 from .sidecars import ImageIndex, find_images_txt, read_images_txt
 from .sounds import SOUND_EXTS, convert_sound
 from .textures import TEXTURE_EXTS, convert_texture
@@ -117,6 +119,37 @@ class _Run:
         self.gdt_models = []      # (name, type)
         self.gdt_anims = []       # (name, rig name or "", kind, looping)
         self.rigs = {}            # model output name -> Model (skeleton only)
+        self.taken = set()        # asset names the game's GDTs already define
+        self.renamed = {}         # original name -> new name
+        self.placeholder = None   # texture name used when a material has no color map
+
+    def avoid_taken(self, name, what):
+        """Rename an asset whose name the game already uses (the tools reject duplicates)."""
+        if name.lower() not in self.taken:
+            return name
+        if name in self.renamed:
+            return self.renamed[name]
+        suffix = "_" + self.pack
+        new = name[:max(1, 60 - len(suffix))] + suffix
+        n = 2
+        while new.lower() in self.taken:
+            new = f"{name[:50]}{suffix}{n}"
+            n += 1
+        self.renamed[name] = new
+        self.emit("info", f"Renamed {what} '{name}' to '{new}': {self.game.short} already has "
+                          "an asset with that name.")
+        return new
+
+    def placeholder_texture(self):
+        """A plain grey texture for materials whose color map couldn't be found."""
+        if self.placeholder is None:
+            import tempfile
+            from PIL import Image
+            folder = tempfile.mkdtemp(prefix="porter_")
+            path = os.path.join(folder, f"{self.pack}_missing_c.png")
+            Image.new("RGB", (64, 64), (128, 128, 128)).save(path)
+            self.placeholder = self.want_texture(path, "color")
+        return self.placeholder
 
     # -- paths ---------------------------------------------------------------
     def folder(self, kind):
@@ -220,6 +253,11 @@ def convert_batch(paths, game_key, out_root, rig_path=None, pack=None,
         if kinds[p] == "texture":
             images.add_file(p)
 
+    # Names the target game already uses: the mod tools refuse duplicate GDT entries.
+    run.taken = existing_asset_names(game, out_root, pack)
+    if run.taken:
+        emit("info", f"Checked {len(run.taken):,} asset names already in your {game.short} GDTs.")
+
     # 2. Models.
     model_names = set()
     for src in (p for p in files if kinds[p] == "model"):
@@ -232,8 +270,14 @@ def convert_batch(paths, game_key, out_root, rig_path=None, pack=None,
             name, n = base, 2
             while name in model_names:
                 name, n = f"{base}_{n}", n + 1
+            name = run.avoid_taken(name, "model")
             model_names.add(name)
             model.name = name
+            if game.gdt == "legacy":
+                shift = recenter_viewmodel(model)
+                if shift:
+                    emit("info", f"Moved this viewmodel by {abs(shift[2]):g} units so tag_view sits at "
+                                 f"the origin, as {game.short} expects (its animations get the same move).")
             _resolve_materials(model, src, info, images, run, emit)
             out = os.path.join(run.folder("model"), name + game.model_ext)
             write_model(model, out, game)
@@ -260,6 +304,8 @@ def convert_batch(paths, game_key, out_root, rig_path=None, pack=None,
         try:
             fixed_rig = prepare_model(read_model(rig_path), game, lambda *a: None, scale)
             fixed_rig.name = safe_name(os.path.basename(rig_path))
+            if game.gdt == "legacy":
+                recenter_viewmodel(fixed_rig)
         except Exception as e:  # noqa: BLE001
             emit("warn", f"Couldn't read skeleton {os.path.basename(rig_path)}: {e}")
 
@@ -291,8 +337,19 @@ def convert_batch(paths, game_key, out_root, rig_path=None, pack=None,
             name, n = stem, 2
             while name in anim_names:
                 name, n = f"{stem}_{n}", n + 1
+            name = run.avoid_taken(name, "animation")
             anim_names.add(name)
             rig_name = rig.name if rig is not None else _rig_for_parts(anim.parts, run)
+            rig_obj = rig if rig is not None else run.rigs.get(rig_name)
+            if rig_obj is not None and _ext(src) not in KEYED_EXTS:
+                if getattr(rig_obj, "shift", None):
+                    shift_anim(anim, rig_obj.shift)
+                if kind != "additive":
+                    added = complete_with_rig(anim, rig_obj)
+                    if added:
+                        emit("info", f"Added {len(added)} bone{'s' if len(added) != 1 else ''} the "
+                                     f"animation leaves to the model ({', '.join(added[:4])}"
+                                     f"{'...' if len(added) > 4 else ''}), so the whole chain converts.")
             out = os.path.join(run.folder("anim"), name + game.anim_ext)
             if game.anim_format == "xanim_bin":
                 write_xanim_bin(anim, out)
@@ -361,30 +418,84 @@ def convert_batch(paths, game_key, out_root, rig_path=None, pack=None,
     return summary
 
 
+def existing_asset_names(game, out_root, pack):
+    """Asset names defined by GDTs already in the game's folders (lowercase).
+
+    Checks the output folder (when it's a game folder) and the detected install
+    for this game, skipping the GDT this batch writes.
+    """
+    from .installs import find_game_folders
+    roots = []
+    for r in (out_root, find_game_folders().get(game.key)):
+        if r and os.path.isdir(r) and os.path.normcase(os.path.abspath(r)) not in roots:
+            roots.append(os.path.normcase(os.path.abspath(r)))
+    ours = {os.path.normcase(os.path.abspath(os.path.join(r, "source_data", pack + ".gdt"))) for r in roots}
+    names = set()
+    pattern = re.compile(r'"([^"]+)"\s*[\(\[]\s*"[^"]+\.gdf"\s*[\)\]]')
+    for root in roots:
+        dirs = []
+        listing = os.path.join(root, "bin", "converter_gdt_dirs_0.txt")
+        try:
+            with open(listing, encoding="utf-8", errors="replace") as f:
+                dirs = [line.strip() for line in f if line.strip()]
+        except OSError:
+            pass
+        dirs = dirs or ["source_data", "model_export", "xanim_export", "texture_assets"]
+        for d in dirs:
+            base = os.path.join(root, d)
+            if not os.path.isdir(base):
+                continue
+            for folder, subdirs, fnames in os.walk(base):
+                if folder.count(os.sep) - base.count(os.sep) >= 4:
+                    subdirs[:] = []
+                for fn in fnames:
+                    if not fn.lower().endswith(".gdt"):
+                        continue
+                    path = os.path.join(folder, fn)
+                    if os.path.normcase(os.path.abspath(path)) in ours:
+                        continue
+                    try:
+                        with open(path, encoding="utf-8", errors="replace") as f:
+                            names.update(n.lower() for n in pattern.findall(f.read()))
+                    except OSError:
+                        pass
+    return names
+
+
 def _resolve_materials(model, src, info, images, run, emit):
     missing = []
     for mat in model.materials:
+        original = mat.name
+        mat.name = run.avoid_taken(mat.name, "material")
         maps = dict(mat.maps)
-        for slot, ref in info.material_maps(mat.name).items():
+        for slot, ref in info.material_maps(original).items():
             maps.setdefault(slot, ref)
-        sidecar = find_images_txt(src, mat.name)
+        sidecar = find_images_txt(src, original)
         if sidecar:
             for slot, ref in read_images_txt(sidecar).items():
                 maps.setdefault(slot, ref)
-        for slot, ref in maps.items():
-            if slot not in ("color", "normal", "spec", "gloss", "ao"):
-                continue
-            path = images.find(ref, near=src)
-            if path:
-                mat.files[slot] = path
-                mat.outputs[slot] = run.want_texture(path, slot) + run.game.texture_ext
-            elif slot == "color":
-                missing.append(f"{mat.name} ({os.path.basename(ref.replace(chr(92), '/'))})")
-        run.gdt_materials.setdefault(mat.name, {s: os.path.splitext(o)[0] for s, o in mat.outputs.items()})
+        _fill_material(mat, maps, src, images, run, missing)
     if missing:
         emit("warn", "Couldn't find the color texture for: " + ", ".join(missing[:5])
              + (" ..." if len(missing) > 5 else "")
-             + ". Add the images to the list (or keep them next to the model).")
+             + ". They use a plain grey placeholder for now: add the images to the list "
+               "(or keep them next to the model) and convert again.")
+
+
+def _fill_material(mat, maps, src, images, run, missing):
+    for slot, ref in maps.items():
+        if slot not in ("color", "normal", "spec", "gloss", "ao"):
+            continue
+        path = images.find(ref, near=src)
+        if path:
+            mat.files[slot] = path
+            mat.outputs[slot] = run.want_texture(path, slot) + run.game.texture_ext
+    if "color" not in mat.outputs:
+        ref = maps.get("color", "")
+        missing.append(f"{mat.name} ({os.path.basename(ref.replace(chr(92), '/'))})" if ref else mat.name)
+        if run.game.gdt:   # the mod tools refuse materials without a color map
+            mat.outputs["color"] = run.placeholder_texture() + run.game.texture_ext
+    run.gdt_materials.setdefault(mat.name, {s: os.path.splitext(o)[0] for s, o in mat.outputs.items()})
 
 
 def _pick_rig(src, hint, fixed_rig, run, emit):
@@ -431,7 +542,7 @@ def _write_gdt(run):
     if g.gdt == "bo3":
         image_names = {}
         for name, slot, _src in sorted(run.textures.values()):
-            asset = name if name.startswith("i_") else "i_" + name
+            asset = run.avoid_taken(name if name.startswith("i_") else "i_" + name, "image")
             image_names[name] = asset
             sem, core, comp = BO3_IMAGE.get(slot or _guess_slot(name) or "color")
             entries.append((asset, "image.gdf", [

@@ -159,6 +159,26 @@ def prepare_model(model: Model, game: Game, log, scale=1.0) -> Model:
     return model
 
 
+def recenter_viewmodel(model: Model):
+    """Newer games author viewmodels with tag_view at eye height (e.g. z=60).
+    CoD4/WaW/BO1 expect tag_view at the origin, so move the whole model down.
+    Returns the shift applied (also stored as model.shift), or None."""
+    roots = [b for b in model.bones if b.parent < 0]
+    if len(roots) != 1 or roots[0].name.lower() != "tag_view":
+        return None
+    p = roots[0].world_pos
+    if max(abs(c) for c in p) < 0.5:
+        return None
+    shift = (-p[0], -p[1], -p[2])
+    model.verts = [((v[0] + shift[0], v[1] + shift[1], v[2] + shift[2]), w) for v, w in model.verts]
+    for b in model.bones:
+        b.world_pos = tuple(b.world_pos[k] + shift[k] for k in range(3))
+        if b.parent < 0:
+            b.local_pos = b.world_pos
+    model.shift = shift
+    return shift
+
+
 def write_model(model: Model, path, game: Game):
     if game.model_format == "xmodel6":
         write_xmodel(model, path, 6)

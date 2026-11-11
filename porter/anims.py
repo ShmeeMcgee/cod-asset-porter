@@ -154,6 +154,46 @@ def bake_keyed(path, rig: Model, log) -> Anim:
     return anim
 
 
+def shift_anim(anim: Anim, shift):
+    """Move every part by `shift` (used when a viewmodel rig is re-centred)."""
+    dx, dy, dz = shift
+    anim.frames = [[((off[0] + dx, off[1] + dy, off[2] + dz), X, Y, Z) for off, X, Y, Z in fr]
+                   for fr in anim.frames]
+
+
+def complete_with_rig(anim: Anim, rig: Model) -> list:
+    """Add rig bones the animation doesn't include, held at their rest pose.
+
+    BO3 animations skip bones like tag_ads that the engine fills in from the
+    model. Older converters drop every bone below a missing one instead, so
+    the full chain has to be in the file. Returns the names that were added.
+    """
+    rig.fill_transforms()
+    have = {p.lower(): i for i, p in enumerate(anim.parts)}
+    missing = [i for i, b in enumerate(rig.bones) if b.name.lower() not in have]
+    if not missing:
+        return []
+    order = rig.parents_first_order()
+    for frame in anim.frames:
+        world = {}
+        for i in order:
+            b = rig.bones[i]
+            pi = have.get(b.name.lower())
+            if pi is not None:
+                off, X, Y, Z = frame[pi]
+                from .mathutil import axes_to_q
+                world[i] = (off, axes_to_q(X, Y, Z))
+            elif b.parent >= 0 and b.parent in world:
+                ppos, prot = world[b.parent]
+                world[i] = (v_add(ppos, q_rotate(prot, b.local_pos)),
+                            q_normalize(q_mul(prot, b.local_rot)))
+            else:
+                world[i] = (b.world_pos, b.world_rot)
+        frame.extend((world[i][0], *q_to_axes(world[i][1])) for i in missing)
+    anim.parts = list(anim.parts) + [rig.bones[i].name for i in missing]
+    return [rig.bones[i].name for i in missing]
+
+
 def read_anim(src, rig: Model | None, log) -> Anim:
     ext = _ext(src)
     if ext in (".xanim_export", ".xanim_bin"):

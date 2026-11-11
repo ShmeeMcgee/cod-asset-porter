@@ -333,3 +333,56 @@ class PorterTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RealToolFixes(unittest.TestCase):
+    """Regressions found by running output through the real WaW converter."""
+
+    def test_missing_rig_bones_are_filled(self):
+        from porter.anims import complete_with_rig
+        from porter.data import Anim, Bone, Model
+        rig = Model("rig")
+        for name, parent, pos in (("tag_view", -1, (0, 0, 0)), ("tag_ads", 0, (1, 0, 0)), ("j_arm", 1, (2, 0, 0))):
+            b = Bone(name, parent)
+            b.world_pos, b.world_rot = pos, IDQ
+            rig.bones.append(b)
+        rig.fill_transforms()
+        anim = Anim("a")
+        anim.parts = ["j_arm"]
+        ident = ((1.0, 0, 0), (0, 1.0, 0), (0, 0, 1.0))
+        anim.frames = [[((5.0, 0, 0), *ident)], [((6.0, 0, 0), *ident)]]
+        added = complete_with_rig(anim, rig)
+        self.assertEqual(sorted(added), ["tag_ads", "tag_view"])
+        self.assertEqual(len(anim.frames[1]), 3)
+        self.assertTrue(close(anim.frames[1][anim.parts.index("tag_ads")][0], (1, 0, 0)))
+
+    def test_viewmodel_recentred_for_old_games(self):
+        from porter.data import Bone, Model
+        from porter.models import recenter_viewmodel
+        m = Model("vm")
+        b = Bone("tag_view", -1)
+        b.world_pos, b.world_rot = (0.0, 0.0, 60.0), IDQ
+        m.bones.append(b)
+        m.verts = [((1.0, 0.0, 61.0), [(0, 1.0)])]
+        m.fill_transforms()
+        self.assertEqual(recenter_viewmodel(m), (-0.0, -0.0, -60.0))
+        self.assertTrue(close(m.verts[0][0], (1, 0, 1)))
+
+    def test_taken_names_and_placeholder(self):
+        tmp = tempfile.mkdtemp(prefix="porter_taken_")
+        try:
+            src = os.path.join(tmp, "src")
+            os.makedirs(src)
+            write_semodel(os.path.join(src, "Test Arm.semodel"))       # no textures supplied
+            game_root = os.path.join(tmp, "game")
+            os.makedirs(os.path.join(game_root, "model_export"))
+            with open(os.path.join(game_root, "model_export", "stock.gdt"), "w") as f:
+                f.write('{\n\t"mtl_arm_skin" ( "material.gdf" )\n\t{\n\t}\n\t"test_arm" ( "xmodel.gdf" )\n\t{\n\t}\n}\n')
+            s = convert_batch([src], "waw", game_root, pack="pk")
+            self.assertEqual(s["failed"], 0)
+            ents = {(n, g): kv for n, g, kv in read_gdt(os.path.join(game_root, "source_data", "pk.gdt"))}
+            self.assertIn(("test_arm_pk", "xmodel.gdf"), ents)
+            self.assertIn(("mtl_arm_skin_pk", "material.gdf"), ents)
+            self.assertTrue(ents[("mtl_arm_skin_pk", "material.gdf")]["colorMap"].endswith("pk_missing_c.tga"))
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
